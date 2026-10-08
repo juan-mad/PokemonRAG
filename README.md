@@ -12,5 +12,5 @@ I am working on this project as a way to put into practice several elements abou
 ## What you need to run it
 - HuggingFace API Token, to call on LLMs. Currently only [Qwen3-4B-Instruct-2507](ihttps://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)
 is being used.
-- PokeAPI Postgres database. In the `docker/` folder, there are files and instructions to self host
+- [PokeAPI](https://pokeapi.co/) Postgres database. In the `docker/` folder, there are files and instructions to self host
 an instance of the PokeAPI API and Postgres database. We only use the database, for now.
