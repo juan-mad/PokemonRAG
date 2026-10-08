@@ -1,0 +1,156 @@
+services:
+  db:
+    image: postgres:18.4-alpine
+    container_name: pokeapi-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - ./data/postgres:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    ports:
+      - "5433:5432"
+
+
+    networks:
+      - backend
+ 
+  redis:
+    image: redis:8.6.4-alpine
+    container_name: pokeapi-redis
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+
+    networks:
+      - backend
+
+
+  db-bootstrap:
+    image: postgres:18.4-alpine
+    container_name: pokeapi-db-bootstrap
+    restart: "no"
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - ./bootstrap/pokeapi.pgdump:/bootstrap/pokeapi.pgdump:ro
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+
+        echo "Checking whether PokeAPI database is already populated..."
+
+        if [ "$$(psql \
+            -h db \
+            -U "$$POSTGRES_USER" \
+            -d "$$POSTGRES_DB" \
+            -tAc "SELECT to_regclass('public.pokemon_v2_pokemon') IS NOT NULL")" = "t" ]; then
+
+          echo "PokeAPI database already populated; skipping restore."
+
+        else
+          echo "Restoring PokeAPI database..."
+
+          pg_restore \
+            -h db \
+            -U "$$POSTGRES_USER" \
+            -d "$$POSTGRES_DB" \
+            --no-owner \
+            --no-privileges \
+            /bootstrap/pokeapi.pgdump
+
+          echo "Database restore complete."
+        fi
+
+    networks:
+      - backend
+
+
+  init:
+    image: pokeapi/pokeapi:master
+    container_name: pokeapi-init
+    restart: "no"
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+
+        echo "Applying Django migrations..."
+
+        python manage.py migrate \
+          --settings=config.docker_compose
+
+        echo "Initialization complete."
+
+    networks:
+      - backend
+
+
+  pokeapi:
+    image: pokeapi/pokeapi:master
+    container_name: pokeapi
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+    networks:
+      - backend
+
+
+networks:
+  backend:
+    internal: true
